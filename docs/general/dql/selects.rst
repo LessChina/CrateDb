@@ -513,6 +513,136 @@ does always return ``NULL`` when comparing ``NULL``.
     +----------+
     SELECT 1 row in set (... sec)
 
+
+.. _sql_dql_any_array:
+
+``ANY (array)``
+===============
+
+The ANY (or SOME) function allows you to query elements within :ref:`arrays
+<sql_dql_arrays>`.
+
+For example, this query returns any row where the array
+``inhabitants['interests']`` contains a ``netball`` element::
+
+    cr> select inhabitants['name'], inhabitants['interests'] from locations
+    ... where 'netball' = ANY(inhabitants['interests']);
+    +---------------------+------------------------------+
+    | inhabitants['name'] | inhabitants['interests']     |
+    +---------------------+------------------------------+
+    | Minories            | ["netball", "short stories"] |
+    | Bartledannians      | ["netball"]                  |
+    +---------------------+------------------------------+
+    SELECT 2 rows in set (... sec)
+
+This query combines the ``ANY`` function with the :ref:`LIKE <sql_dql_like>`
+operator::
+
+    cr> select inhabitants['name'], inhabitants['interests'] from locations
+    ... where '%stories%' LIKE ANY(inhabitants['interests']);
+    +---------------------+------------------------------+
+    | inhabitants['name'] | inhabitants['interests']     |
+    +---------------------+------------------------------+
+    | Minories            | ["netball", "short stories"] |
+    +---------------------+------------------------------+
+    SELECT 1 row in set (... sec)
+
+This query passes a literal array value to the ``ANY`` function::
+
+    cr> select name, inhabitants['interests'] from locations
+    ... where name = ANY(ARRAY['Bartledan', 'Algol'])
+    ... order by name asc;
+    +-----------+--------------------------+
+    | name      | inhabitants['interests'] |
+    +-----------+--------------------------+
+    | Algol     | NULL                     |
+    | Bartledan | ["netball"]              |
+    +-----------+--------------------------+
+    SELECT 2 rows in set (... sec)
+
+This query selects any locations with at least one (i.e., :ref:`ANY
+<sql_dql_any_array>`) population figure above 100::
+
+    cr> select name, information['population'] from locations
+    ... where 100 < ANY (information['population'])
+    ... order by name;
+    +-------------------+---------------------------+
+    | name              | information['population'] |
+    +-------------------+---------------------------+
+    | Orion Beta        | [3600001, 1]              |
+    | Outer Eastern Rim | [5673745846]              |
+    +-------------------+---------------------------+
+    SELECT 2 rows in set (... sec)
+
+.. NOTE::
+
+    It is possible to use ``ANY`` to compare values directly against the
+    properties of object arrays, as above. However, this usage is discouraged
+    as it cannot utilize the table index and requires the equivalent of a table
+    scan.
+
+The ``ANY`` construct can be used in :ref:`subquery expressions
+<sql_subquery_expressions>` and :ref:`array comparisons
+<sql_array_comparisons>`.
+
+
+Negating ``ANY``
+----------------
+
+Negating the ``ANY`` operator does not behave like other comparison operators.
+
+The following query negates ``ANY`` using ``!=`` to return all rows where
+``inhabitants['interests']`` has *at least one* :ref:`array <sql_dql_arrays>`
+element that is not ``netball``::
+
+    cr> select inhabitants['name'], inhabitants['interests'] from locations
+    ... where 'netball' != ANY(inhabitants['interests']);
+    +----------------------+------------------------------+
+    | inhabitants['name']  | inhabitants['interests']     |
+    +----------------------+------------------------------+
+    | Minories             | ["netball", "short stories"] |
+    | A-Rth-Urp-Hil-Ipdenu | ["lettuce", "slime"]         |
+    +----------------------+------------------------------+
+    SELECT 2 rows in set (... sec)
+
+.. NOTE::
+
+    When using the  ``!= ANY(<array_col>))`` syntax, the default maximum size
+    of the array can be 8192. To be use larger arrays, you must configure the
+    :ref:`indices.query.bool.max_clause_count
+    <indices.query.bool.max_clause_count>` setting as appropriate on each node.
+
+Negating the same query with a preceding ``not`` returns all rows where
+``inhabitants['interests']`` has no ``netball`` element::
+
+    cr> select inhabitants['name'], inhabitants['interests'] from locations
+    ... where not 'netball' = ANY(inhabitants['interests']);
+    +----------------------+--------------------------+
+    | inhabitants['name']  | inhabitants['interests'] |
+    +----------------------+--------------------------+
+    | A-Rth-Urp-Hil-Ipdenu | ["lettuce", "slime"]     |
+    +----------------------+--------------------------+
+    SELECT 1 row in set (... sec)
+
+This behaviour applies to:
+
+ - ``LIKE`` and ``NOT LIKE``
+
+ - All other comparison operators (excluding ``IS NULL`` and ``IS NOT NULL``)
+
+.. NOTE::
+
+    When using the ``NOT`` with ``ANY``, the performance of the query may be
+    poor because special handling is required to implement the `3-valued
+    logic`_. For better performance, consider using the :ref:`ignore3vl
+    <ignore3vl>` function.
+
+    Additionally, When using ``NOT`` with ``LIKE ANY`` or ``NOT LIKE ANY``,
+    the default maximum size of the array can be 8192. To be use larger arrays,
+    you must configure the :ref:`indices.query.bool.max_clause_count
+    <indices.query.bool.max_clause_count>` setting as appropriate on each node.
+
+
 .. _sql_dql_arrays:
 
 Arrays
@@ -839,134 +969,6 @@ array by omitting the array index, like so::
    subscript value per expression. The following won't work:
 
    ``select my_column[1]['property'][2] from my_table;``
-
-
-.. _sql_dql_any_array:
-
-``ANY (array)``
-===============
-
-The ANY (or SOME) function allows you to query elements within arrays.
-
-For example, this query returns any row where the array
-``inhabitants['interests']`` contains a ``netball`` element::
-
-    cr> select inhabitants['name'], inhabitants['interests'] from locations
-    ... where 'netball' = ANY(inhabitants['interests']);
-    +---------------------+------------------------------+
-    | inhabitants['name'] | inhabitants['interests']     |
-    +---------------------+------------------------------+
-    | Minories            | ["netball", "short stories"] |
-    | Bartledannians      | ["netball"]                  |
-    +---------------------+------------------------------+
-    SELECT 2 rows in set (... sec)
-
-This query combines the ``ANY`` function with the :ref:`LIKE <sql_dql_like>`
-operator::
-
-    cr> select inhabitants['name'], inhabitants['interests'] from locations
-    ... where '%stories%' LIKE ANY(inhabitants['interests']);
-    +---------------------+------------------------------+
-    | inhabitants['name'] | inhabitants['interests']     |
-    +---------------------+------------------------------+
-    | Minories            | ["netball", "short stories"] |
-    +---------------------+------------------------------+
-    SELECT 1 row in set (... sec)
-
-This query passes a literal array value to the ``ANY`` function::
-
-    cr> select name, inhabitants['interests'] from locations
-    ... where name = ANY(ARRAY['Bartledan', 'Algol'])
-    ... order by name asc;
-    +-----------+--------------------------+
-    | name      | inhabitants['interests'] |
-    +-----------+--------------------------+
-    | Algol     | NULL                     |
-    | Bartledan | ["netball"]              |
-    +-----------+--------------------------+
-    SELECT 2 rows in set (... sec)
-
-This query selects any locations with at least one (i.e., :ref:`ANY
-<sql_dql_any_array>`) population figure above 100::
-
-    cr> select name, information['population'] from locations
-    ... where 100 < ANY (information['population'])
-    ... order by name;
-    +-------------------+---------------------------+
-    | name              | information['population'] |
-    +-------------------+---------------------------+
-    | Orion Beta        | [3600001, 1]              |
-    | Outer Eastern Rim | [5673745846]              |
-    +-------------------+---------------------------+
-    SELECT 2 rows in set (... sec)
-
-.. NOTE::
-
-    It is possible to use ``ANY`` to compare values directly against the
-    properties of object arrays, as above. However, this usage is discouraged
-    as it cannot utilize the table index and requires the equivalent of a table
-    scan.
-
-The ``ANY`` construct can be used in :ref:`subquery expressions
-<sql_subquery_expressions>` and :ref:`array comparisons
-<sql_array_comparisons>`.
-
-
-Negating ``ANY``
-----------------
-
-Negating the ``ANY`` operator does not behave like other comparison operators.
-
-The following query negates ``ANY`` using ``!=`` to return all rows where
-``inhabitants['interests']`` has *at least one* element that is not
-``netball``::
-
-    cr> select inhabitants['name'], inhabitants['interests'] from locations
-    ... where 'netball' != ANY(inhabitants['interests']);
-    +----------------------+------------------------------+
-    | inhabitants['name']  | inhabitants['interests']     |
-    +----------------------+------------------------------+
-    | Minories             | ["netball", "short stories"] |
-    | A-Rth-Urp-Hil-Ipdenu | ["lettuce", "slime"]         |
-    +----------------------+------------------------------+
-    SELECT 2 rows in set (... sec)
-
-.. NOTE::
-
-    When using the  ``!= ANY(<array_col>))`` syntax, the default maximum size
-    of the array can be 8192. To be use larger arrays, you must configure the
-    :ref:`indices.query.bool.max_clause_count
-    <indices.query.bool.max_clause_count>` setting as appropriate on each node.
-
-Negating the same query with a preceding ``not`` returns all rows where
-``inhabitants['interests']`` has no ``netball`` element::
-
-    cr> select inhabitants['name'], inhabitants['interests'] from locations
-    ... where not 'netball' = ANY(inhabitants['interests']);
-    +----------------------+--------------------------+
-    | inhabitants['name']  | inhabitants['interests'] |
-    +----------------------+--------------------------+
-    | A-Rth-Urp-Hil-Ipdenu | ["lettuce", "slime"]     |
-    +----------------------+--------------------------+
-    SELECT 1 row in set (... sec)
-
-This behaviour applies to:
-
- - ``LIKE`` and ``NOT LIKE``
-
- - All other comparison operators (excluding ``IS NULL`` and ``IS NOT NULL``)
-
-.. NOTE::
-
-    When using the ``NOT`` with ``ANY``, the performance of the query may be
-    poor because special handling is required to implement the `3-valued
-    logic`_. For better performance, consider using the :ref:`ignore3vl
-    <ignore3vl>` function.
-
-    Additionally, When using ``NOT`` with ``LIKE ANY`` or ``NOT LIKE ANY``,
-    the default maximum size of the array can be 8192. To be use larger arrays,
-    you must configure the :ref:`indices.query.bool.max_clause_count
-    <indices.query.bool.max_clause_count>` setting as appropriate on each node.
 
 
 .. _sql_dql_aggregation:
