@@ -710,10 +710,11 @@ index ``n`` is compared. To compare against *any* array element, see
 
 .. NOTE::
 
-   You can nest arrays within arrays, but you can only have one subscript value
-   per expression. The following won't work:
+   You cannot nest arrays within arrays (e.g., ``array(array(string))`` is not
+   a valid column definition). Accordingly, ``my_column[1][2]`` is not valid
+   syntax, because the element referenced by ``my_column[1]`` is guaranteed not
+   to contain a child array.
 
-   ``select my_column[1][2] from my_table;``
 
 
 .. _sql_dql_objects:
@@ -776,40 +777,47 @@ Object property can also be addressed in the :ref:`where clause
 .. _sql_dql_object_arrays:
 .. _sql_dql_array_objects:
 
-Arrays within objects
-=====================
+Nested arrays and objects
+=========================
 
-Objects may contain arrays, and these arrays can be selected and queried.
+Objects may contain arrays and arrays may contain objects. These nested arrays
+and objects can be selected and queried.
 
-For example, you might insert an object containing an array like so::
+.. NOTE::
 
-    cr> insert into locations (id, name, position, kind, inhabitants)
+    TODO: mention nesting limitations::
+
+      > can objects be nested two deep? i.e., is my_column['a']['b'] ever valid?
+      > yes this is valid and a very common use-case
+      > the limitation is only direct nesting of arrays like array(array(...).
+      > but having an object in between is valid like array(object as (k array(...))) (edited)
+
+For example, you might insert something like this::
+
+    cr> insert into locations (id, name, position, kind, inhabitants, information)
     ... values (16, 'Folfanga', 4, 'Star System',
     ...     {name = 'A-Rth-Urp-Hil-Ipdenu',
     ...      description = 'A species of small slug',
-    ...      interests = ['lettuce', 'slime']}
+    ...      interests = ['lettuce', 'slime']},
+    ...     [{evolution_level=6, population=3600001},
+    ...     {evolution_level=42, population=1}]
     ... );
     INSERT OK, 1 row affected (... sec)
 
-.. Hidden: refresh locations
+As a result, the ``inhabitants`` column will contain a parent object with a
+child array named ``interests``::
 
-    cr> refresh table locations;
-    REFRESH OK, 1 row affected (... sec)
-
-The result::
-
-    cr> select name, inhabitants from locations
-    ... where name = 'Folfanga';
+      cr> select name, inhabitants from locations
+      ... where name = 'Folfanga';
       +----------+---------------------------------------------------------------------------------------------------------------+
-    | name     | inhabitants                                                                                                   |
-    +----------+---------------------------------------------------------------------------------------------------------------+
-    | Folfanga | {"description": "A species of small slug", "interests": ["lettuce", "slime"], "name": "A-Rth-Urp-Hil-Ipdenu"} |
-    +----------+---------------------------------------------------------------------------------------------------------------+
-    SELECT 1 row in set (... sec)
+      | name     | inhabitants                                                                                                   |
+      +----------+---------------------------------------------------------------------------------------------------------------+
+      | Folfanga | {"description": "A species of small slug", "interests": ["lettuce", "slime"], "name": "A-Rth-Urp-Hil-Ipdenu"} |
+      +----------+---------------------------------------------------------------------------------------------------------------+
+      SELECT 1 row in set (... sec)
 
-The child array can be selected as a property of the parent object in the
-``inhabitants`` column using ``inhabitants['property']``, where ``property`` is
-the parent object property name, like so::
+The child array can be selected as an :ref:`object property
+<sql_dql_objects>`::
 
     cr> select name, inhabitants['interests'] from locations
     ... where name = 'Folfanga';
@@ -820,9 +828,9 @@ the parent object property name, like so::
     +----------+--------------------------+
     SELECT 1 row in set (... sec)
 
-The elements of the child array can be selected with
-``inhabitants[n]['property']``, where ``n`` is the child array index and
-``property`` is the parent object property name, like so::
+Individual elements of the child array can be selected with
+``inhabitants[n]['interests']``, where ``n`` is the child array index, like
+so::
 
     cr> select name, inhabitants[1]['interests'] from locations
     ... where name = 'Folfanga';
@@ -833,33 +841,59 @@ The elements of the child array can be selected with
     +----------+-----------------------------+
     SELECT 1 row in set (... sec)
 
-.. NOTE::
+.. TIP::
 
-    When accessing arrays within objects, the child array index comes before
-    the parent object property name (i.e., ``my_column[n]['property']``), not
-    the other way around. At the moment, the reverse syntax (i.e.,
-    ``my_column['property'][n]``) is not supported.
+    The syntax above may not be what you expect; the child array index comes
+    before the parent object property name.
 
-    Note also that ``my_column[n]['property']`` syntax can reference the
-    ``property`` of a child object at index ``n`` of a parent array, if the
-    column holds :ref:`arrays instead of objects <sql_dql_object_arrays>`. This
-    makes the syntax `polymorphic`_ (i.e., behavior is inferred from the data
-    type of the column).
+    When inserting data, :ref:`array literals <data-type-array-literals>` and
+    :ref:`object literals <data-type-object-literals>` (i.e., the chunks of
+    text that looks like JSON) are deserialized into a number of key-value
+    pairs for use with the underlying Lucene index (i.e., flattened). As a
+    result, when selecting data (in a way that uses the Lucene index), you are
+    not directly querying a hierarchical structure that looks like JSON. You
+    are querying the "flattened" Lucene indexes.
 
-    As an alternative, child arrays can be :ref:`type cast
-    <type_cast_from_string_literal>` to :ref:`text <data-type-text>` if you
-    want the array index to appear last::
+    Accordingly, the order of the array index and the object properties is
+    always the same: array index first, object properties second. (There can
+    only be one array index per expression. Multiple object properties are
+    specified in hierarchical order.)
 
-        cr> select name, inhabitants['interests']::text[][1] from locations
-        ... where name = 'Folfanga';
-        +----------+-----------------------------+
-        | name     | inhabitants[1]['interests'] |
-        +----------+-----------------------------+
-        | Folfanga | lettuce                     |
-        +----------+-----------------------------+
-        SELECT 1 row in set (... sec)
+    To illustrate this rule, consider that that ``inhabitants[1]['interests']``
+    could also refer to the ``interests`` property of a child object at index
+    ``1`` of a parent array.
+
+    As a consequence of the way that :ref:`array literals
+    <data-type-array-literals>` and :ref:`object literals
+    <data-type-object-literals>` are deserialized for indexing, you cannot
+    directly nest an array within an array (i.e., ``array(array(...)`` is not a
+    valid column definition). You can, however, nest multiple arrays if an
+    object comes between them (e.g., ``array(object as (array(...)))`` is a
+    valid).
+
+    There is no standard syntax for addressing the elements of a second array.
+    As a workaround, you can do something like
+    ``my_column[n1]['property']::text[][n2]``, where ``n1`` is the index of the
+    parent array and ``n2`` is the index of the child array. This works by
+    casting the second array to a string and then casting that string to an
+    array. However, this workaround circumvents the index and will slow down
+    the query.
+
 
 .. _polymorphic: https://en.wikipedia.org/wiki/Polymorphism_(computer_science)
+
+
+And the ``information`` column contains a parent array with two child objects::
+
+      cr> select name, information from locations
+      ... where name = 'Orion Beta';
+      +------------+-------------------------------------------------------------------------------------------+
+      | name       | information                                                                               |
+      +------------+-------------------------------------------------------------------------------------------+
+      | Orion Beta | [{"evolution_level": 6, "population": 3600001}, {"evolution_level": 42, "population": 1}] |
+      +------------+-------------------------------------------------------------------------------------------+
+      SELECT 1 row in set (... sec)
+
 
 The elements of the child array can also be addressed in the :ref:`where
 clause <sql_dql_where_clause>`, like so::
@@ -889,31 +923,6 @@ Object within arrays
 
 Arrays may contain objects, and these can be selected and queried.
 
-For example, you might insert an array of objects like so::
-
-    cr> insert into locations (id, name, position, kind, information)
-    ... values (
-    ...   17, 'Orion Beta', 3, 'Star System',
-    ...   [{evolution_level=6, population=3600001},
-    ...   {evolution_level=42, population=1}]
-    ... );
-    INSERT OK, 1 row affected (... sec)
-
-.. Hidden: refresh locations
-
-    cr> refresh table locations;
-    REFRESH OK, 1 row affected (... sec)
-
-The result::
-
-    cr> select name, information from locations
-    ... where name = 'Orion Beta';
-    +------------+-------------------------------------------------------------------------------------------+
-    | name       | information                                                                               |
-    +------------+-------------------------------------------------------------------------------------------+
-    | Orion Beta | [{"evolution_level": 6, "population": 3600001}, {"evolution_level": 42, "population": 1}] |
-    +------------+-------------------------------------------------------------------------------------------+
-    SELECT 1 row in set (... sec)
 
 The individual child objects can be selected as an element of the parent array
 in the ``information`` column using ``locations[1]``, where ``n`` is the parent
